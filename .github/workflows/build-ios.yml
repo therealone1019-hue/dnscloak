@@ -59,7 +59,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          npm run build 2>&1 | tee prepare.log
+          { npm run bundle:dev && npm run prepare:dev && bash build/build-ios-framework-ci.sh; } 2>&1 | tee prepare.log
 
       - name: Attempt unsigned Xcode build
         id: xcode
@@ -83,6 +83,7 @@ jobs:
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             -derivedDataPath "$PWD/DerivedData" \
+            IPHONEOS_DEPLOYMENT_TARGET=12.0 \
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee xcode-build.log
 
