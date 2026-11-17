@@ -3,13 +3,16 @@ name: Build Original DNSCloak iOS
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-ios.yml'
 
 permissions:
   contents: read
 
 jobs:
   build-ios:
-    runs-on: macos-15
+    runs-on: macos-15-intel
     timeout-minutes: 60
 
     steps:
@@ -82,6 +85,19 @@ jobs:
             -derivedDataPath "$PWD/DerivedData" \
             CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee xcode-build.log
+
+      - name: Package unsigned IPA
+        if: steps.xcode.outcome == 'success'
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="DerivedData/Build/Products/Debug-iphoneos/DNSCryptApp.app"
+          test -f "$APP/Info.plist"
+          mkdir -p build-results/Payload
+          cp -R "$APP" build-results/Payload/
+          cd build-results
+          zip -qry DNSCloak-unsigned.ipa Payload
+          rm -rf Payload
 
       - name: Collect build outputs
         if: always()
