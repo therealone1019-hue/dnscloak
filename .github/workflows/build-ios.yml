@@ -1,0 +1,129 @@
+
+name: Build Original DNSCloak iOS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout DNSCloak source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: |
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '12'
+
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.20'
+
+      - name: Show environment
+        run: |
+          node --version
+          npm --version
+          go version
+          git --version
+
+      - name: Install project dependencies
+        id: dependencies
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm install --no-audit --no-fund \
+            2>&1 | tee dependencies.log
+
+      - name: Run original DNSCloak build
+        id: prepare
+        if: steps.dependencies.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee prepare.log
+
+      - name: Attempt unsigned Xcode build
+        id: xcode
+        if: steps.prepare.outcome == 'success'
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+
+          WORKSPACE="platforms/ios/DNSCryptApp.xcworkspace"
+
+          if [ ! -d "$WORKSPACE" ]; then
+            echo "Xcode workspace not found"
+            exit 1
+          fi
+
+          xcodebuild \
+            -workspace "$WORKSPACE" \
+            -scheme DNSCryptApp \
+            -configuration Debug \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$PWD/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            build 2>&1 | tee xcode-build.log
+
+      - name: Collect build outputs
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p build-results
+
+          cp -f dependencies.log build-results/ 2>/dev/null || true
+          cp -f prepare.log build-results/ 2>/dev/null || true
+          cp -f xcode-build.log build-results/ 2>/dev/null || true
+
+          if [ -d "DerivedData/Build/Products" ]; then
+            find DerivedData/Build/Products \
+              -name "*.app" -type d \
+              -exec cp -R {} build-results/ \;
+          fi
+
+          echo "Build outputs collected"
+
+      - name: Upload build results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dnscloak-ios-build-results
+          path: build-results/
+          retention-days: 7
+
+      - name: Report build status
+        if: always()
+        shell: bash
+        env:
+          DEPS: ${{ steps.dependencies.outcome }}
+          PREPARE: ${{ steps.prepare.outcome }}
+          XCODE: ${{ steps.xcode.outcome }}
+        run: |
+          echo "Dependencies: $DEPS"
+          echo "DNSCloak preparation: $PREPARE"
+          echo "Xcode compilation: $XCODE"
+
+          if [ "$XCODE" != "success" ]; then
+            echo "Build incomplete. Review uploaded logs."
+            exit 1
+          fi
+
+          echo "Unsigned iOS build completed."
